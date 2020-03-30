@@ -10,6 +10,8 @@
 #include <Headers/kern_cpu.hpp>
 #include <IOKit/IODeviceTreeSupport.h>
 
+BaseDeviceInfo globalBaseDeviceInfo;
+
 void DeviceInfo::updateLayoutId() {
 	reportedLayoutId = DefaultReportedLayoutId;
 	if (PE_parse_boot_argn(ReportedLayoutIdArg, &reportedLayoutId, sizeof(reportedLayoutId))) {
@@ -23,7 +25,7 @@ void DeviceInfo::updateFramebufferId() {
 	if (!videoBuiltin)
 		return;
 
-	auto gen = CPUInfo::getGeneration();
+	auto gen = BaseDeviceInfo::get().cpuGeneration;
 	if (gen != CPUInfo::CpuGeneration::SandyBridge)
 		reportedFramebufferName = ReportedFrameIdName;
 	else
@@ -62,7 +64,7 @@ void DeviceInfo::updateFramebufferId() {
 					reportedFramebufferId = DefaultVesaPlatformId;
 			} else {
 				// These are really failsafe defaults, you should NOT rely on them.
-				auto model = WIOKit::getComputerModel();
+				auto model = BaseDeviceInfo::get().modelType;
 				if (model == WIOKit::ComputerModel::ComputerLaptop) {
 					if (gen == CPUInfo::CpuGeneration::SandyBridge)
 						reportedFramebufferId = 0x00010000;
@@ -113,88 +115,27 @@ void DeviceInfo::updateFramebufferId() {
 	reportedFramebufferIsConnectorLess = isConnectorLessPlatformId(reportedFramebufferId);
 }
 
-void DeviceInfo::updateFirmwareVendor() {
-	auto entry = IORegistryEntry::fromPath("/efi", gIODTPlane);
-	if (entry) {
-		auto ven = OSDynamicCast(OSData, entry->getProperty("firmware-vendor"));
-		if (ven) {
-			auto bytes = ven->getBytesNoCopy();
-			size_t len = ven->getLength();
-			if (bytes && len > 0) {
-				struct Matching {
-					FirmwareVendor ven;
-					const char16_t *str;
-					size_t len;
-				};
-
-				//TODO: Add more vendors here (like branded Phoenix or Intel).
-				Matching matching[] {
-					// All Apple-made hardware.
-					{FirmwareVendor::Apple, u"Apple", sizeof(u"Apple")},
-					// Parallels Desktop virtual machines.
-					{FirmwareVendor::Parallels, u"Parallels Software International Inc.", sizeof(u"Parallels Software International Inc.")},
-					// VMware Fusion, Workstation, Player, ESXi virtual machines.
-					{FirmwareVendor::VMware, u"VMware, Inc.", sizeof(u"VMware, Inc.")},
-					// OVMF firmware for QEMU or XEN.
-					{FirmwareVendor::EDKII, u"EDK II", sizeof(u"EDK II")},
-					// Two variants of AMI APTIO firmware names. Shorter one is older.
-					{FirmwareVendor::AMI, u"American Megatrends", sizeof(u"American Megatrends")},
-					{FirmwareVendor::AMI, u"American Megatrends Inc.", sizeof(u"American Megatrends Inc.")},
-					// Branded Insyde H2O firmwares.
-					{FirmwareVendor::Insyde, u"INSYDE Corp.", sizeof(u"INSYDE Corp.")},
-					// Branded Phoenix firmwares.
-					{FirmwareVendor::Phoenix, u"Phoenix Technologies Ltd.", sizeof(u"Phoenix Technologies Ltd.")},
-					// Legacy HP firmwares found in old HP ProBooks, which were based on Insyde or Phoenix.
-					{FirmwareVendor::HP, u"HPQ", sizeof(u"HPQ")},
-					// New FSP-based HP firmwares found in hardware like HP ProDesk 400 G4 Mini
-					{FirmwareVendor::HP, u"HP", sizeof(u"HP")}
-				};
-
-				for (size_t i = 0; i < arrsize(matching); i++) {
-					if (len == matching[i].len &&
-						!memcmp(bytes, matching[i].str, len)) {
-						firmwareVendor = matching[i].ven;
-						DBGLOG("dev", "detected %d firmware", firmwareVendor);
-						break;
-					}
-				}
-			}
-		} else {
-			SYSLOG("dev", "failed to obtain firmware vendor");
-		}
-
-		entry->release();
-	} else {
-		SYSLOG("dev", "failed to obtain efi tree");
-	}
-}
-
 uint32_t DeviceInfo::getLegacyFramebufferId() {
-	char boardIdentifier[64] {};
-	if (WIOKit::getComputerInfo(nullptr, 0, boardIdentifier, sizeof(boardIdentifier))) {
-		struct {
-			const char *boardId;
-			uint32_t platformId;
-		} sandyBoards[] = {
-			{"Mac-94245B3640C91C81", 0x10000},
-			{"Mac-94245AF5819B141B", 0x10000},
-			{"Mac-94245A3940C91C80", 0x10000},
-			{"Mac-942459F5819B171B", 0x10000},
-			{"Mac-8ED6AF5B48C039E1", 0x30010}, // or 0x30020
-			{"Mac-7BA5B2794B2CDB12", 0x30010}, // or 0x30020
-			{"Mac-4BC72D62AD45599E", 0x30030},
-			{"Mac-742912EFDBEE19B3", 0x40000},
-			{"Mac-C08A6BB70A942AC2", 0x40000},
-			{"Mac-942B5BF58194151B", 0x50000},
-			{"Mac-942B5B3A40C91381", 0x50000},
-			{"Mac-942B59F58194171B", 0x50000}
-		};
-		for (size_t i = 0; i < arrsize(sandyBoards); i++)
-			if (!strcmp(sandyBoards[i].boardId, boardIdentifier))
-				return sandyBoards[i].platformId;
-	} else {
-		SYSLOG("dev", "failed to obtain board-id");
-	}
+	struct {
+		const char *boardId;
+		uint32_t platformId;
+	} sandyBoards[] = {
+		{"Mac-94245B3640C91C81", 0x10000},
+		{"Mac-94245AF5819B141B", 0x10000},
+		{"Mac-94245A3940C91C80", 0x10000},
+		{"Mac-942459F5819B171B", 0x10000},
+		{"Mac-8ED6AF5B48C039E1", 0x30010}, // or 0x30020
+		{"Mac-7BA5B2794B2CDB12", 0x30010}, // or 0x30020
+		{"Mac-4BC72D62AD45599E", 0x30030},
+		{"Mac-742912EFDBEE19B3", 0x40000},
+		{"Mac-C08A6BB70A942AC2", 0x40000},
+		{"Mac-942B5BF58194151B", 0x50000},
+		{"Mac-942B5B3A40C91381", 0x50000},
+		{"Mac-942B59F58194171B", 0x50000}
+	};
+	for (size_t i = 0; i < arrsize(sandyBoards); i++)
+		if (!strcmp(sandyBoards[i].boardId, BaseDeviceInfo::get().boardIdentifier))
+			return sandyBoards[i].platformId;
 
 	return DefaultVesaPlatformId;
 }
@@ -249,10 +190,15 @@ void DeviceInfo::grabDevicesFromPciRoot(IORegistryEntry *pciRoot) {
 					DBGLOG("dev", "found HDEF device %s", safeString(name));
 					audioBuiltinAnalog = obj;
 				}
-			} else if (vendor == WIOKit::VendorID::Intel && (code == WIOKit::ClassCode::IMEI || (name &&
-				(!strcmp(name, "IMEI") || !strcmp(name, "HECI") || !strcmp(name, "MEI"))))) {
+			} else if (vendor == WIOKit::VendorID::Intel &&
+				name && (!strcmp(name, "IMEI") || !strcmp(name, "HECI") || !strcmp(name, "MEI"))) {
 				// Fortunately IMEI is always made by Intel
 				DBGLOG("dev", "found IMEI device %s", safeString(name));
+				managementEngine = obj;
+			} else if (vendor == WIOKit::VendorID::Intel && managementEngine == nullptr && code == WIOKit::ClassCode::IMEI) {
+				// There can be many devices with IMEI class code.
+				// REF: https://github.com/acidanthera/bugtracker/issues/716
+				DBGLOG("dev", "found IMEI device candidate %s", safeString(name));
 				managementEngine = obj;
 			} else if (code == WIOKit::ClassCode::PCIBridge) {
 				DBGLOG("dev", "found pci bridge %s", safeString(name));
@@ -353,7 +299,8 @@ DeviceInfo *DeviceInfo::create() {
 
 			list->updateLayoutId();
 			list->updateFramebufferId();
-			list->updateFirmwareVendor();
+
+			list->firmwareVendor = BaseDeviceInfo::get().firmwareVendor;
 		} else {
 			SYSLOG("dev", "failed to obtain PCI lookup iterator");
 		}
@@ -370,3 +317,169 @@ void DeviceInfo::deleter(DeviceInfo *d) {
 	d->videoExternal.deinit();
 	delete d;
 }
+
+void BaseDeviceInfo::updateFirmwareVendor() {
+	auto entry = IORegistryEntry::fromPath("/efi", gIODTPlane);
+	if (entry) {
+		auto ven = OSDynamicCast(OSData, entry->getProperty("firmware-vendor"));
+		if (ven) {
+			auto bytes = ven->getBytesNoCopy();
+			size_t len = ven->getLength();
+			if (bytes && len > 0) {
+				struct Matching {
+					DeviceInfo::FirmwareVendor ven;
+					const char16_t *str;
+					size_t len;
+				};
+
+				//TODO: Add more vendors here (like branded Phoenix or Intel).
+				Matching matching[] {
+					// All Apple-made hardware.
+					{DeviceInfo::FirmwareVendor::Apple, u"Apple", sizeof(u"Apple")},
+					// Parallels Desktop virtual machines.
+					{DeviceInfo::FirmwareVendor::Parallels, u"Parallels Software International Inc.", sizeof(u"Parallels Software International Inc.")},
+					// VMware Fusion, Workstation, Player, ESXi virtual machines.
+					{DeviceInfo::FirmwareVendor::VMware, u"VMware, Inc.", sizeof(u"VMware, Inc.")},
+					// OVMF firmware for QEMU or XEN.
+					{DeviceInfo::FirmwareVendor::EDKII, u"EDK II", sizeof(u"EDK II")},
+					// Two variants of AMI APTIO firmware names. Shorter one is older.
+					{DeviceInfo::FirmwareVendor::AMI, u"American Megatrends", sizeof(u"American Megatrends")},
+					{DeviceInfo::FirmwareVendor::AMI, u"American Megatrends Inc.", sizeof(u"American Megatrends Inc.")},
+					// Branded Insyde H2O firmwares.
+					{DeviceInfo::FirmwareVendor::Insyde, u"INSYDE Corp.", sizeof(u"INSYDE Corp.")},
+					// Branded Phoenix firmwares.
+					{DeviceInfo::FirmwareVendor::Phoenix, u"Phoenix Technologies Ltd.", sizeof(u"Phoenix Technologies Ltd.")},
+					// Legacy HP firmwares found in old HP ProBooks, which were based on Insyde or Phoenix.
+					{DeviceInfo::FirmwareVendor::HP, u"HPQ", sizeof(u"HPQ")},
+					// New FSP-based HP firmwares found in hardware like HP ProDesk 400 G4 Mini
+					{DeviceInfo::FirmwareVendor::HP, u"HP", sizeof(u"HP")}
+				};
+
+				for (size_t i = 0; i < arrsize(matching); i++) {
+					if (len == matching[i].len &&
+						!memcmp(bytes, matching[i].str, len)) {
+						firmwareVendor = matching[i].ven;
+						DBGLOG("dev", "detected %d firmware", firmwareVendor);
+						break;
+					}
+				}
+			}
+		} else {
+			SYSLOG("dev", "failed to obtain firmware vendor");
+		}
+
+		entry->release();
+	} else {
+		SYSLOG("dev", "failed to obtain efi tree");
+	}
+}
+
+void BaseDeviceInfo::updateModelInfo() {
+	auto entry = IORegistryEntry::fromPath("/efi/platform", gIODTPlane);
+	if (entry) {
+		if (entry->getProperty("BEMB")) {
+			bootloaderVendor = BootloaderVendor::Clover;
+			SYSLOG("dev", "WARN: found Clover bootloader");
+		} else if (entry->getProperty("REV")) {
+			bootloaderVendor = BootloaderVendor::Acidanthera;
+			DBGLOG("dev", "assuming Acidanthera bootloader");
+			// Note, OpenCore is mostly stealth. One can detect it via:
+			// - Acidanthera manufacturer (only if we decided to update SMBIOS, available much later).
+			// - opencore-version variable (only if we decided to expose it NVRAM)
+			// - "REV" key before it is deleted by VirtualSMC (only if we decided to update DataHub)
+		}
+
+		auto data = OSDynamicCast(OSData, entry->getProperty("Model"));
+		size_t dataSize = data ? data->getLength() : 0;
+		if (dataSize > 0) {
+			auto bytes = static_cast<const char16_t *>(data->getBytesNoCopy());
+			size_t i = 0;
+			while (bytes[i] != '\0' && i < sizeof(modelIdentifier) - 1 && i < dataSize) {
+				modelIdentifier[i] = static_cast<char>(bytes[i]);
+				i++;
+			}
+		}
+
+		if (modelIdentifier[0] != '\0')
+			DBGLOG("dev", "got %s model from /efi/platform", modelIdentifier);
+		else
+			DBGLOG("dev", "failed to get valid model from /efi/platform");
+
+		data = OSDynamicCast(OSData, entry->getProperty("board-id"));
+		if (data && data->getLength() > 0)
+			lilu_os_strlcpy(boardIdentifier, static_cast<const char *>(data->getBytesNoCopy()), sizeof(boardIdentifier));
+
+		if (boardIdentifier[0] != '\0')
+			DBGLOG("dev", "got %s board-id from /efi/platform", boardIdentifier);
+		else
+			DBGLOG("dev", "failed to get valid board-id from /efi/platform");
+
+		entry->release();
+	} else {
+		SYSLOG("dev", "failed to get DT /efi/platform");
+	}
+
+	// Try the legacy approach for old MacEFI and VMware.
+	while (modelIdentifier[0] == '\0' || boardIdentifier[0] == '\0') {
+		auto entry = IORegistryEntry::fromPath("/", gIODTPlane);
+		if (entry) {
+			bool modelReady = false;
+
+			if (boardIdentifier[0] == '\0') {
+				auto data = OSDynamicCast(OSData, entry->getProperty("board-id"));
+				if (data && data->getLength() > 0)
+					lilu_os_strlcpy(boardIdentifier, static_cast<const char *>(data->getBytesNoCopy()), sizeof(boardIdentifier));
+
+				if (boardIdentifier[0] != '\0') {
+					DBGLOG("dev", "got %s board-id from /", boardIdentifier);
+					// Otherwise we will get ACPI model.
+					modelReady = true;
+				} else {
+					DBGLOG("dev", "failed to get valid board-id from /");
+				}
+			} else {
+				modelReady = true;
+			}
+
+			if (modelReady && modelIdentifier[0] == '\0') {
+				auto data = OSDynamicCast(OSData, entry->getProperty("model"));
+				if (data && data->getLength() > 0)
+					lilu_os_strlcpy(modelIdentifier, static_cast<const char *>(data->getBytesNoCopy()), sizeof(modelIdentifier));
+
+				if (modelIdentifier[0] != '\0')
+					DBGLOG("dev", "got %s model from /", modelIdentifier);
+				else
+					DBGLOG("dev", "failed to get valid model from /");
+			}
+
+
+
+			entry->release();
+		} else {
+			SYSLOG("dev", "failed to get DT root");
+		}
+
+		if (modelIdentifier[0] == '\0' || boardIdentifier[0] == '\0') {
+			SYSLOG("dev", "failed to obtain model information, retrying...");
+			IOSleep(1);
+		}
+	}
+
+	if (strstr(modelIdentifier, "Book", strlen("Book")))
+		modelType = WIOKit::ComputerModel::ComputerLaptop;
+	else
+		modelType = WIOKit::ComputerModel::ComputerDesktop;
+}
+
+const BaseDeviceInfo &BaseDeviceInfo::get() {
+	return globalBaseDeviceInfo;
+}
+
+void BaseDeviceInfo::init() {
+	// Initialize the CPU part.
+	CPUInfo::init();
+
+	globalBaseDeviceInfo.updateFirmwareVendor();
+	globalBaseDeviceInfo.updateModelInfo();
+}
+
