@@ -1,5 +1,19 @@
 Lilu Changelog
 ==============
+#### v1.4.6
+- Added preliminary definitions for 11.0 support
+- Temporarily disabled user patcher for 11.0
+- Added `external-audio` property to ignore PCI audio cards
+- Added in-memory symbol solving for 11.0
+- Fixed accidentally solving stabs instead of normal symbols
+- Added device publishing API to monitor device startup
+- Added DeviceInfo caching for improved performance
+- Added implicit slotted (medium) patches in KC mode to reduce patch size
+
+#### v1.4.5
+- Fixed newer CPU generation detection
+- Added failsafe versions of CML framebuffers
+
 #### v1.4.4
 - Added new CFL connector-less framebuffers: 0x9BC80003, 0x9BC50003, 0x9BC40003
 - Fixed KDK support disrespecting file suffixes

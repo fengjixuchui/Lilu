@@ -47,7 +47,7 @@ private:
 	/**
 	 * Maxmimum supported kernel version
 	 */
-	static constexpr KernelVersion maxKernel {KernelVersion::Catalina};
+	static constexpr KernelVersion maxKernel {KernelVersion::BigSur};
 
 	/**
 	 *  Set once the arguments are parsed
@@ -55,11 +55,25 @@ private:
 	bool readArguments {false};
 
 	/**
+	 *  Initialise kernel patcher in two-stage mode
+	 *
+	 *  @return true on success
+	 */
+	bool performEarlyInit();
+
+	/**
 	 *  Initialise kernel and user patchers if necessary
 	 *
 	 *  @return true on success
 	 */
 	bool performInit();
+
+	/**
+	 *  Initialise second stage kernel patcher
+	 *
+	 *  @return true on success
+	 */
+	bool performCommonInit();
 
 	/**
 	 *  Initialise kernel and user patchers from policy handler
@@ -98,16 +112,38 @@ private:
 	static int policyCheckRemount(kauth_cred_t, mount *, label *);
 
 	/**
+	 *  May be used at TrustedBSD policy initialisation
+	 *
+	 *  @param conf policy configuration
+	 */
+	static void policyInitBSD(mac_policy_conf *conf);
+
+	/**
+	 *  Console initialisation wrapper used for signaling Lilu to end plugin loading.
+	 *
+	 *  @param info   video information
+	 *  @param op     operation to perform
+	 *
+	 *  @return 0 on success
+	 */
+	static int initConsole(PE_Video *info, int op);
+
+	/**
 	 *  TrustedBSD policy options
 	 */
 	mac_policy_ops policyOps {
-		.mpo_policy_initbsd					= Policy::dummyPolicyInitBSD
+		.mpo_policy_initbsd = policyInitBSD
 	};
 
 	/**
 	 *  TrustedBSD policy handlers are not thread safe
 	 */
 	IOLock *policyLock {nullptr};
+
+	/**
+	 *  Original function pointer for PE_initialize_console.
+	 */
+	mach_vm_address_t orgInitConsole {0};
 
 #ifdef DEBUG
 	/**

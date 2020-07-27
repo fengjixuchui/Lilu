@@ -37,16 +37,22 @@ kern_return_t MachInfo::init(const char * const paths[], size_t num, MachInfo *p
 
 	allow_decompress = ADDPR(config).allowDecompress;
 
+	// Attempt to load directly from the filesystem
+	(void)fsfallback;
+
+	// Use in-memory init on modern operating systems when launched in KC mode.
+	error = initFromMemory();
+	if (kernel_collection && strstr(paths[0], ".kext") != NULL)
+		return error;
+
 	// Check if we have a proper credential, prevents a race-condition panic on 10.11.4 Beta
 	// When calling kauth_cred_get() for the current_thread.
 	//TODO: Try to find a better solution...
 	if (!kernproc || !current_thread() || !vfs_context_current() || !vfs_context_ucred(vfs_context_current())) {
-		SYSLOG("mach", "current context has no credential, it's too early");
+		SYSLOG("mach", "current context has no credential, it's too early %d %d %d %d",
+			   !kernproc, !current_thread(), !vfs_context_current(), !vfs_context_ucred(vfs_context_current()));
 		return error;
 	}
-
-	// Attempt to load directly from the filesystem
-	(void)fsfallback;
 
 	//TODO: There still is a chance of booting with outdated prelink cache, so we cannot optimise it currently.
 	// We are fine to detect prelinked usage (#27), but prelinked may not contain certain kexts and even more
@@ -57,7 +63,8 @@ kern_return_t MachInfo::init(const char * const paths[], size_t num, MachInfo *p
 	// to prelinked. This does not solve the main problem of distinguishing kexts, but the only practical cases
 	// of our failure are missing kexts in both places and AirPort drivers in installer/recovery only present
 	// in prelinked. For this reason we are fine.
-	error = initFromFileSystem(paths, num);
+	if (!linkedit_buf)
+		error = initFromFileSystem(paths, num);
 
 	// Attempt to get linkedit from prelink
 	if (!linkedit_buf)
@@ -70,9 +77,26 @@ void MachInfo::deinit() {
 	freeFileBufferResources();
 
 	if (linkedit_buf) {
-		Buffer::deleter(linkedit_buf);
+		if (!linkedit_buf_ro)
+			Buffer::deleter(linkedit_buf);
 		linkedit_buf = nullptr;
 	}
+}
+
+kern_return_t MachInfo::initFromMemory() {
+	// Before 11.0 __LINKEDIT is dropped from memory unless keepsyms=1 argument is specified.
+	// With 11.0 for all kernel collections (KC) __LINKEDIT is preserved for both kexts and kernels.
+	// See OSKext::removeKextBootstrap and OSKext::jettisonLinkeditSegment.
+	if (getKernelVersion() < KernelVersion::BigSur)
+		return KERN_FAILURE;
+
+	// We can still launch macOS 11 with prelinkedkernel, in which case memory init will not be available.
+	findKernelBase();
+	DBGLOG_COND(isKernel, "mach", "memory init mode - %d", kernel_collection);
+	if (!kernel_collection)
+		return KERN_FAILURE;
+
+	return KERN_SUCCESS;
 }
 
 kern_return_t MachInfo::initFromPrelinked(MachInfo *prelink) {
@@ -194,6 +218,14 @@ kern_return_t MachInfo::initFromFileSystem(const char * const paths[], size_t nu
 }
 
 mach_vm_address_t MachInfo::findKernelBase() {
+	static mach_vm_address_t m_kernel_base {0};
+	static bool m_kernel_collection {false};
+
+	if (m_kernel_base != 0) {
+		kernel_collection = m_kernel_collection;
+		return m_kernel_base;
+	}
+
 	// The function choice is completely random here, yet IOLog often has a low address.
 	auto tmp = reinterpret_cast<mach_vm_address_t>(IOLog);
 
@@ -202,9 +234,16 @@ mach_vm_address_t MachInfo::findKernelBase() {
 
 	// Search backwards for the kernel base address (mach-o header)
 	while (true) {
-		if (*reinterpret_cast<uint32_t *>(tmp) == MH_MAGIC_64) {
-			// make sure it's the header and not some reference to the MAGIC number
-			auto segmentCommand = reinterpret_cast<segment_command_64 *>(tmp + sizeof(mach_header_64));
+		auto header = reinterpret_cast<mach_header_64 *>(tmp);
+		if (header->magic == MH_MAGIC_64) {
+			// make sure it's the header and not some reference to the MAGIC number.
+			// 0xC is MH_FILESET, available exclusively in newer SDKs.
+			if (getKernelVersion() >= KernelVersion::BigSur && header->filetype == 0xC && header->flags == 0 && header->reserved == 0) {
+				DBGLOG("mach", "found kernel nouveau mach-o header address at %llx", tmp);
+				m_kernel_collection = kernel_collection = true;
+				break;
+			}
+			auto segmentCommand = reinterpret_cast<segment_command_64 *>(header + 1);
 			if (!strncmp(segmentCommand->segname, "__TEXT", sizeof(segmentCommand->segname))) {
 				DBGLOG("mach", "found kernel mach-o header address at %llx", tmp);
 				break;
@@ -214,6 +253,7 @@ mach_vm_address_t MachInfo::findKernelBase() {
 		tmp -= KASLRAlignment;
 	}
 
+	m_kernel_base = tmp;
 	return tmp;
 }
 
@@ -289,8 +329,9 @@ mach_vm_address_t MachInfo::solveSymbol(const char *symbol) {
 				// get the pointer to the symbol entry and extract its symbol string
 				auto symbolStr = reinterpret_cast<char *>(strlist + nlist->n_un.n_strx);
 				// find if symbol matches
-				if (reinterpret_cast<uint8_t *>(symbolStr + symlen) <= endaddr && !strncmp(symbol, symbolStr, symlen)) {
-					DBGLOG("mach", "found symbol %s at 0x%llx (non-aslr 0x%llx)", symbol, nlist->n_value + kaslr_slide, nlist->n_value);
+				if (reinterpret_cast<uint8_t *>(symbolStr + symlen) <= endaddr && (nlist->n_type & N_STAB) == 0 && !strncmp(symbol, symbolStr, symlen)) {
+					DBGLOG("mach", "found symbol %s at 0x%llx (non-aslr 0x%llx), type %x, sect %x, desc %x", symbol, nlist->n_value + kaslr_slide,
+						   nlist->n_value, nlist->n_type, nlist->n_sect, nlist->n_desc);
 					// the symbol values are without kernel ASLR so we need to add it
 					return nlist->n_value + kaslr_slide;
 				}
@@ -714,6 +755,109 @@ uint8_t *MachInfo::findImage(const char *identifier, uint32_t &imageSize, mach_v
 	return nullptr;
 }
 
+kern_return_t MachInfo::kcGetRunningAddresses(mach_vm_address_t slide) {
+	// We are meant to know the base address of kexts
+	mach_vm_address_t base = slide ? slide : findKernelBase();
+
+	if (base == 0) {
+		SYSLOG("mach", "unknown base for kc mode, aborting");
+		return KERN_FAILURE;
+	}
+
+	auto mh = reinterpret_cast<mach_header_64 *>(base);
+	mach_header_64 *inner = nullptr;
+
+	// __LINKEDIT is present in the inner kernel only.
+	if (isKernel) {
+		auto addr = reinterpret_cast<uint8_t *>(mh) + sizeof(mach_header_64);
+		DBGLOG("mach", "looking up inner kernel in %u commands at " PRIKADDR, mh->ncmds, CASTKADDR(mh));
+		for (uint32_t i = 0; i < mh->ncmds; i++) {
+			auto loadCmd = reinterpret_cast<load_command *>(addr);
+
+			if (loadCmd->cmd == LC_SEGMENT_64) {
+				segment_command_64 *segCmd = reinterpret_cast<segment_command_64 *>(loadCmd);
+				if (!strncmp(segCmd->segname, "__PRELINK_TEXT", sizeof(segCmd->segname))) {
+					inner = reinterpret_cast<mach_header_64 *>(segCmd->vmaddr);
+					break;
+				}
+			}
+			addr += loadCmd->cmdsize;
+		}
+
+		if (!inner) {
+			SYSLOG("mach", "failed to find inner kernel kc mach-o");
+			return KERN_FAILURE;
+		}
+	} else {
+		inner = mh;
+	}
+
+	DBGLOG("mach", "got nouveau mach-o for %s at " PRIKADDR, objectId, CASTKADDR(inner));
+
+	mach_vm_address_t last_addr = 0;
+
+	auto addr = reinterpret_cast<uint8_t *>(inner) + sizeof(mach_header_64);
+	for (uint32_t i = 0; i < inner->ncmds; i++) {
+		load_command *loadCmd = reinterpret_cast<load_command *>(addr);
+
+		if (loadCmd->cmd == LC_SEGMENT_64) {
+			auto segCmd = reinterpret_cast<segment_command_64 *>(loadCmd);
+			DBGLOG("mach", "%s has segment is %s from " PRIKADDR " to " PRIKADDR, objectId, segCmd->segname,
+				   CASTKADDR(segCmd->vmaddr), CASTKADDR(segCmd->vmaddr + segCmd->vmsize));
+			if (!linkedit_buf && !strncmp(segCmd->segname, "__LINKEDIT", sizeof(segCmd->segname))) {
+				linkedit_buf = reinterpret_cast<uint8_t *>(segCmd->vmaddr);
+				linkedit_fileoff = segCmd->fileoff;
+				linkedit_size = segCmd->vmsize;
+				linkedit_buf_ro = true;
+			} else if (segCmd->vmaddr + segCmd->vmsize > last_addr) {
+				// We exclude __LINKEDIT here as it is much farther from the rest of the segments,
+				// and we will unlikely need to patch it anyway. Doing this makes it much safer
+				// to apply patches, as they will not hit unmapped areas.
+				last_addr = segCmd->vmaddr + segCmd->vmsize;
+			}
+		} else if (!symboltable_fileoff && loadCmd->cmd == LC_SYMTAB) {
+			auto symtab_cmd = reinterpret_cast<symtab_command *>(loadCmd);
+			symboltable_fileoff = symtab_cmd->symoff;
+			symboltable_nr_symbols = symtab_cmd->nsyms;
+			stringtable_fileoff = symtab_cmd->stroff;
+		}
+
+		addr += loadCmd->cmdsize;
+	}
+
+	if (!linkedit_buf || !symboltable_fileoff) {
+		SYSLOG("mach", "failed to find kc linkedit %d symtab %d", linkedit_buf != nullptr, symboltable_fileoff != 0);
+		return KERN_FAILURE;
+	}
+
+	if (last_addr < reinterpret_cast<mach_vm_address_t>(inner)) {
+		SYSLOG("mach", "invalid last address " PRIKADDR " with header " PRIKADDR, CASTKADDR(last_addr), CASTKADDR(inner));
+		return KERN_FAILURE;
+	}
+
+	kaslr_slide_set = true;
+	prelink_slid = true;
+	running_mh = inner;
+	memory_size = last_addr - reinterpret_cast<mach_vm_address_t>(inner);
+	if (slide != 0) {
+		address_slots = reinterpret_cast<mach_vm_address_t>(inner + 1) + inner->sizeofcmds;
+		DBGLOG("mach", "activating slots for %s in " PRIKADDR, objectId, CASTKADDR(address_slots));
+	}
+	return KERN_SUCCESS;
+}
+
+mach_vm_address_t MachInfo::getAddressSlot() {
+	// FIXME: For now let's assume it does not overflow and corrupt the __text section
+	// following Mach-O header. In the future we could add more checks to be extra
+	// careful.
+	if (address_slots) {
+		auto slot = address_slots;
+		address_slots += sizeof(mach_vm_address_t);
+		return slot;
+	}
+	return 0;
+}
+
 kern_return_t MachInfo::getRunningAddresses(mach_vm_address_t slide, size_t size, bool force) {
 	if (force) {
 		kaslr_slide_set = false;
@@ -724,11 +868,14 @@ kern_return_t MachInfo::getRunningAddresses(mach_vm_address_t slide, size_t size
 
 	if (kaslr_slide_set) return KERN_SUCCESS;
 
-	if (size > 0)
-		memory_size = size;
+	if (size > 0) memory_size = size;
 
 	// We are meant to know the base address of kexts
 	mach_vm_address_t base = slide ? slide : findKernelBase();
+
+	if (kernel_collection && !linkedit_buf)
+		return kcGetRunningAddresses(slide);
+
 	if (base != 0) {
 		// get the vm address of __TEXT segment
 		auto mh = reinterpret_cast<mach_header_64 *>(base);
@@ -833,6 +980,9 @@ bool MachInfo::loadUUID(void *header) {
 }
 
 bool MachInfo::isCurrentBinary(mach_vm_address_t base) {
+	if (kernel_collection)
+		return true;
+
 	auto binaryBase = reinterpret_cast<void *>(base ? base : findKernelBase());
 	auto binaryUUID = binaryBase ? getUUID(binaryBase) : nullptr;
 

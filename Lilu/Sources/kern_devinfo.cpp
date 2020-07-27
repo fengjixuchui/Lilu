@@ -11,6 +11,7 @@
 #include <IOKit/IODeviceTreeSupport.h>
 
 BaseDeviceInfo globalBaseDeviceInfo;
+DeviceInfo *globalDeviceInfo;
 
 void DeviceInfo::updateLayoutId() {
 	reportedLayoutId = DefaultReportedLayoutId;
@@ -60,6 +61,8 @@ void DeviceInfo::updateFramebufferId() {
 					reportedFramebufferId = ConnectorLessKabyLakePlatformId2;
 				else if (gen == CPUInfo::CpuGeneration::CoffeeLake)
 					reportedFramebufferId = ConnectorLessCoffeeLakePlatformId2;
+				else if (gen == CPUInfo::CpuGeneration::CometLake)
+					reportedFramebufferId = ConnectorLessCoffeeLakePlatformId4;
 				else
 					reportedFramebufferId = DefaultVesaPlatformId;
 			} else {
@@ -78,7 +81,7 @@ void DeviceInfo::updateFramebufferId() {
 						reportedFramebufferId = 0x19160000;
 					else if (gen == CPUInfo::CpuGeneration::KabyLake)
 						reportedFramebufferId = 0x591B0000;
-					else if (gen == CPUInfo::CpuGeneration::CoffeeLake)
+					else if (gen == CPUInfo::CpuGeneration::CoffeeLake || gen == CPUInfo::CpuGeneration::CometLake)
 						reportedFramebufferId = 0x3EA50009;
 					else if (gen == CPUInfo::CpuGeneration::CannonLake)
 						reportedFramebufferId = 0x5A590000;
@@ -99,7 +102,7 @@ void DeviceInfo::updateFramebufferId() {
 						reportedFramebufferId = DefaultAppleSkylakePlatformId;
 					else if (gen == CPUInfo::CpuGeneration::KabyLake)
 						reportedFramebufferId = DefaultAppleKabyLakePlatformId;
-					else if (gen == CPUInfo::CpuGeneration::CoffeeLake)
+					else if (gen == CPUInfo::CpuGeneration::CoffeeLake || gen == CPUInfo::CpuGeneration::CometLake)
 						reportedFramebufferId = 0x3E9B0007;
 					else if (gen == CPUInfo::CpuGeneration::CannonLake)
 						reportedFramebufferId = DefaultAppleCannonLakePlatformId;
@@ -162,7 +165,25 @@ bool DeviceInfo::isConnectorLessPlatformId(uint32_t id) {
 	id == ConnectorLessCoffeeLakePlatformId6;
 }
 
+void DeviceInfo::awaitPublishing(IORegistryEntry *obj) {
+	size_t counter = 0;
+	while (counter < 256) {
+		if (obj->getProperty("IOPCIConfigured")) {
+			DBGLOG("dev", "pci bridge %s is configured %lu", safeString(obj->getName()), counter);
+			break;
+		}
+		SYSLOG("dev", "pci bridge %s is not configured %lu, polling", safeString(obj->getName()), counter);
+		++counter;
+		IOSleep(20);
+	}
+
+	if (counter == 256)
+		SYSLOG("dev", "found unconfigured pci bridge %s", safeString(obj->getName()));
+}
+
 void DeviceInfo::grabDevicesFromPciRoot(IORegistryEntry *pciRoot) {
+	awaitPublishing(pciRoot);
+
 	auto iterator = pciRoot->getChildIterator(gIODTPlane);
 	if (iterator) {
 		IORegistryEntry *obj = nullptr;
@@ -205,7 +226,8 @@ void DeviceInfo::grabDevicesFromPciRoot(IORegistryEntry *pciRoot) {
 				managementEngine = obj;
 			} else if (code == WIOKit::ClassCode::PCIBridge) {
 				DBGLOG("dev", "found pci bridge %s", safeString(name));
-				auto pciiterator = IORegistryIterator::iterateOver(obj, gIOServicePlane, kIORegistryIterateRecursively);
+				awaitPublishing(obj);
+				auto pciiterator = IORegistryIterator::iterateOver(obj, gIODTPlane, kIORegistryIterateRecursively);
 				if (pciiterator) {
 					ExternalVideo v {};
 					IORegistryEntry *pciobj = nullptr;
@@ -238,7 +260,7 @@ void DeviceInfo::grabDevicesFromPciRoot(IORegistryEntry *pciRoot) {
 						DBGLOG_COND(v.audio, "dev", "marking audio device as HDAU at %s", safeString(v.audio->getName()));
 						if (!videoExternal.push_back(v))
 							SYSLOG("dev", "failed to push video gpu");
-					} else if (v.audio && !audioBuiltinAnalog) {
+					} else if (v.audio && !audioBuiltinAnalog && v.audio->getProperty("external-audio") == nullptr) {
 						// On modern AMD platforms or VMware built-in audio devices sits on a PCI bridge just any other device.
 						// On AMD it has a distinct Ryzen device-id for the time being, yet on VMware it is just Intel.
 						// To distinguish the devices we use audio card presence as a marker.
@@ -255,7 +277,21 @@ void DeviceInfo::grabDevicesFromPciRoot(IORegistryEntry *pciRoot) {
 	}
 }
 
+DeviceInfo *DeviceInfo::create_cached() {
+	if (globalDeviceInfo != nullptr)
+		PANIC("dev", "called static globalDeviceInfo building twice");
+
+	globalDeviceInfo = DeviceInfo::create();
+	if (globalDeviceInfo == nullptr)
+		PANIC("dev", "failed to build globalDeviceInfo");
+
+	return globalDeviceInfo;
+}
+
 DeviceInfo *DeviceInfo::create() {
+	if (globalDeviceInfo != nullptr)
+		return globalDeviceInfo;
+
 	auto list = new DeviceInfo;
 	if (!list) {
 		SYSLOG("dev", "failed to allocate device list");
@@ -317,8 +353,10 @@ DeviceInfo *DeviceInfo::create() {
 }
 
 void DeviceInfo::deleter(DeviceInfo *d) {
-	d->videoExternal.deinit();
-	delete d;
+	if (d != globalDeviceInfo) {
+		d->videoExternal.deinit();
+		delete d;
+	}
 }
 
 void BaseDeviceInfo::updateFirmwareVendor() {

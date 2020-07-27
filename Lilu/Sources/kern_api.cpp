@@ -8,6 +8,7 @@
 #include <Headers/kern_config.hpp>
 #include <PrivateHeaders/kern_config.hpp>
 #include <Headers/kern_api.hpp>
+#include <Headers/kern_devinfo.hpp>
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IORegistryEntry.h>
@@ -236,6 +237,8 @@ void LiluAPI::processPatcherLoadCallbacks(KernelPatcher &patcher) {
 	apiRequestsOver = true;
 	IOLockUnlock(access);
 
+	DeviceInfo::create_cached();
+
 	// Process the callbacks
 	for (size_t i = 0; i < patcherLoadedCallbacks.size(); i++) {
 		auto p = patcherLoadedCallbacks[i];
@@ -333,7 +336,7 @@ void LiluAPI::processPatcherLoadCallbacks(KernelPatcher &patcher) {
 
 void LiluAPI::processKextLoadCallbacks(KernelPatcher &patcher, size_t id, mach_vm_address_t slide, size_t size, bool reloadable) {
 	// Update running info
-	patcher.updateRunningInfo(id, slide, size, reloadable);
+	size = patcher.updateRunningInfo(id, slide, size, reloadable);
 
 	// Process the callbacks
 	for (size_t i = 0; i < kextLoadedCallbacks.size(); i++) {

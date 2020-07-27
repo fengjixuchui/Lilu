@@ -8,12 +8,15 @@ Please note that improperly written immature plugins will not be listed there.
 |:-----|:------------------|
 [AirportBrcmFixup](https://github.com/acidanthera/AirportBrcmFixup) | Various patches for Broadcom Airport Wi-Fi cards
 [AppleALC](https://github.com/acidanthera/AppleALC) | Native macOS HD audio for not officially supported codecs
+[AMFIExemption](https://github.com/osy86/AMFIExemption) | Adds allowed entitlements to non-Apple signed apps when SIP is enabled
 [ATH9KFixup](https://github.com/chunnann/ATH9KFixup) | Various patches for unsupported Atheros Wi-Fi cards
 [BT4LEContinuityFixup](https://github.com/acidanthera/BT4LEContinuityFixup) | Enable BT4LE-Handoff-Hotspot features
 [CPUFriend](https://github.com/PMheart/CPUFriend) | Dynamic power management data injection
+[CpuTscSync](https://github.com/lvs1974/CpuTscSync) | Сombining functionality of VoodooTSCSync and disabling xcpm_urgency if TSC is not in sync
 [DebugEnhancer](https://github.com/acidanthera/DebugEnhancer) | Enable debug output in the macOS kernel
 [DiskArbitrationFixup](https://github.com/Goldfish64/DiskArbitrationFixup) | Disable the uninitialised disk message at disk insertion
 [HibernationFixup](https://github.com/acidanthera/HibernationFixup) | Enable 3 & 25 mode hibernation on certain hardware
+[Innie](https://github.com/cdf/Innie) | Making PCIe drives appear as internal
 [MacProMemoryNotificationDisabler](https://github.com/IOIIIO/MacProMemoryNotificationDisabler) | Disabling the "more than maximum amount of memory" popup on MacPro7,1
 [NightShiftEnabler](https://github.com/cdf/NightShiftEnabler) | Enables Night Shift on all the models
 [NoTouchID](https://github.com/al3xtjames/NoTouchID) | Disables Touch ID checks causing hangs
