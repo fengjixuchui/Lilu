@@ -230,6 +230,12 @@ install_compiled_sdk() {
     return 1
   fi
 
+  "${GIT}" clone "https://github.com/acidanthera/MacKernelSDK" -b "master" --depth=1 || ret=$?
+  if [ $ret -ne 0 ]; then
+    echo "ERROR: Failed to clone MacKernelSDK with code ${ret}!"
+    return 1
+  fi
+
   "${XCODEBUILD}" -configuration Debug || ret=$?
   if [ $ret -ne 0 ]; then
     echo "ERROR: Failed to compile the latest version with code ${ret}!"
@@ -255,7 +261,7 @@ install_compiled_sdk() {
 prepare_environment || exit 1
 
 ret=0
-if [ "${TRAVIS_TAG}" != "" ] || [ "${BUILD_MODE}" = "prebuilt" ]; then
+if [ "${TRAVIS_TAG}" != "" ] || [[ "${GITHUB_REF}" = refs/tags/* ]] || [ "${BUILD_MODE}" = "prebuilt" ]; then
   install_prebuilt_sdk || ret=$?
 else
   install_compiled_sdk || ret=$?

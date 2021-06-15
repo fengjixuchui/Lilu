@@ -8,7 +8,7 @@
 #include "sha256.h"
 
 #include <Headers/kern_crypto.hpp>
-#include <Library/libkern/crypto/aes.h>
+#include <libkern/crypto/aes.h>
 #include <sys/random.h>
 
 static_assert(Crypto::BlockSize == AES_BLOCK_SIZE, "Invalid block size!");
@@ -65,7 +65,8 @@ uint8_t *Crypto::encrypt(const uint8_t *key, const uint8_t *src, uint32_t &size)
 			read_random(enc->iv, BlockSize);
 
 			aes_encrypt_ctx ctx;
-			auto ret = aes_encrypt_key(key, BlockSize, &ctx);
+			static_assert(BlockSize == 16, "Unsupported key size");
+			auto ret = aes_encrypt_key128(key, &ctx);
 			if (ret == aes_good) {
 				ret = aes_encrypt_cbc(dataBuf, enc->iv, encSize / BlockSize, enc->buf, &ctx);
 				if (ret == aes_good)

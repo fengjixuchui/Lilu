@@ -11,7 +11,7 @@
 #include <i386/proc_reg.h>
 
 extern "C" {
-#include <Library/osfmk/i386/pmCPU.h>
+#include <i386/pmCPU.h>
 }
 
 /**
@@ -50,6 +50,7 @@ void CPUInfo::init() {
 	if (bdi.cpuFamily == 15 || bdi.cpuFamily == 6)
 		bdi.cpuModel |= ver.fmt.extendedModel << 4;
 	bdi.cpuStepping = ver.fmt.stepping;
+	bdi.cpuHasAvx2 = getCpuid(7, 0, nullptr, &b) && (b & CPUInfo::bit_AVX2) != 0;
 
 	// Last but not least detect CPU generation
 	uint32_t generation = 0;
@@ -123,6 +124,12 @@ void CPUInfo::init() {
 			case CPU_MODEL_COMETLAKE_U:
 				bdi.cpuGeneration = CpuGeneration::CometLake;
 				break;
+			case CPU_MODEL_ROCKETLAKE_S:
+				bdi.cpuGeneration = CpuGeneration::RocketLake;
+				break;
+			case CPU_MODEL_TIGERLAKE_U:
+				bdi.cpuGeneration = CpuGeneration::TigerLake;
+				break;
 			default:
 				bdi.cpuGeneration = CpuGeneration::Unknown;
 				break;
@@ -141,6 +148,11 @@ CPUInfo::CpuGeneration CPUInfo::getGeneration(uint32_t *ofamily, uint32_t *omode
 
 bool CPUInfo::getCpuTopology(CpuTopology &topology) {
 	// Obtain power management callbacks
+	if (getKernelVersion() < KernelVersion::Lion) {
+		SYSLOG("cpu", "cannot use pmKextRegister before 10.7");
+		return false;
+	}
+
 	pmCallBacks_t callbacks {};
 	pmKextRegister(PM_DISPATCH_VERSION, nullptr, &callbacks);
 

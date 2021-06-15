@@ -11,7 +11,6 @@
 #include <Headers/kern_config.hpp>
 #include <Headers/kern_util.hpp>
 #include <Headers/kern_patcher.hpp>
-#include <Library/LegacyLibkernMacros.h>
 
 #include <libkern/c++/OSSerialize.h>
 #include <IOKit/IORegistryEntry.h>
@@ -23,7 +22,7 @@ namespace WIOKit {
 	 *  This feels mad and insane, since it may prevent the system from booting.
 	 *  Although this had never happened, we will use a far bigger fail-safe stop value.
 	 */
-	static constexpr size_t bruteMax {0x10000000};
+	static constexpr size_t bruteMax {40000000};
 
 	/**
 	 *  Read typed OSData
@@ -198,7 +197,8 @@ namespace WIOKit {
 		kIOPCIConfigInterruptLine           = 0x3C,
 		kIOPCIConfigInterruptPin            = 0x3D,
 		kIOPCIConfigMinimumGrant            = 0x3E,
-		kIOPCIConfigMaximumLatency          = 0x3F
+		kIOPCIConfigMaximumLatency          = 0x3F,
+		kIOPCIConfigGraphicsControl         = 0x50
 	};
 
 	/**

@@ -12,8 +12,8 @@
 #include <Headers/kern_user.hpp>
 #include <Headers/kern_policy.hpp>
 #include <Headers/kern_util.hpp>
-#include <Headers/kern_atomic.hpp>
 #include <kern/thread_call.h>
+#include <stdatomic.h>
 
 class Configuration {
 	/**
@@ -42,12 +42,12 @@ private:
 	/**
 	 * Minimal required kernel version
 	 */
-	static constexpr KernelVersion minKernel {KernelVersion::MountainLion};
+	static constexpr KernelVersion minKernel {KernelVersion::SnowLeopard};
 
 	/**
 	 * Maxmimum supported kernel version
 	 */
-	static constexpr KernelVersion maxKernel {KernelVersion::BigSur};
+	static constexpr KernelVersion maxKernel {KernelVersion::Monterey};
 
 	/**
 	 *  Set once the arguments are parsed

@@ -12,7 +12,7 @@
 #include <Headers/kern_iokit.hpp>
 #include <Headers/kern_util.hpp>
 
-#include <Library/LegacyIOService.h>
+#include <IOKit/IOService.h>
 
 /**
  *  XNU CPU-related exports missing from headers
@@ -90,6 +90,8 @@ namespace CPUInfo {
 		CPU_MODEL_COMETLAKE_S    =  0xA5, /* desktop CometLake */
 		CPU_MODEL_COMETLAKE_Y    =  0xA5, /* aka 10th generation Amber Lake Y */
 		CPU_MODEL_COMETLAKE_U    =  0xA6,
+		CPU_MODEL_ROCKETLAKE_S   =  0xA7, /* desktop RocketLake */
+		CPU_MODEL_TIGERLAKE_U    =  0x8C,
 	};
 
 	/**
@@ -120,6 +122,8 @@ namespace CPUInfo {
 		CannonLake,
 		IceLake,
 		CometLake,
+		RocketLake,
+		TigerLake,
 		MaxGeneration
 	};
 
